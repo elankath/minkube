@@ -1,2 +1,2 @@
 # minkube
-Collection of Go Modules that represent minimalistic kubernetes services
+ Minimalistic kubernetes services written in Go 
