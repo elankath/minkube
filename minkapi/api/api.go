@@ -2,7 +2,11 @@ package api
 
 import (
 	"context"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	clientevents "k8s.io/client-go/tools/events"
 	"net/http"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -48,7 +52,9 @@ type MinKAPIConfig struct {
 
 type MinKAPIAccess interface {
 	GetServeMux() *http.ServeMux
-	Start() error
+	GetClients() (kubernetes.Interface, dynamic.Interface)
+	GetEventSink() clientevents.EventSink
+	Start(wg *sync.WaitGroup) error
 	Shutdown(ctx context.Context) error
 	CreateObject(gvk schema.GroupVersionKind, obj metav1.Object) error
 	DeleteObjects(gvk schema.GroupVersionKind, criteria MatchCriteria) error

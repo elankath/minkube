@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	clientevents "k8s.io/client-go/tools/events"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -54,6 +58,13 @@ type InMemoryKAPI struct {
 	kubeConfigTmpl *template.Template
 	server         *http.Server
 	log            logr.Logger
+	client         kubernetes.Interface
+	dynClient      dynamic.Interface
+	eventSink      clientevents.EventSink
+}
+
+func (k *InMemoryKAPI) GetEventSink() clientevents.EventSink {
+	return k.eventSink
 }
 
 func NewInMemoryMinKAPI(appCtx context.Context, cfg api.MinKAPIConfig, log logr.Logger) (api.MinKAPIAccess, error) {
@@ -74,7 +85,8 @@ func NewInMemoryMinKAPI(appCtx context.Context, cfg api.MinKAPIConfig, log logr.
 				return appCtx
 			},
 		},
-		log: log,
+		eventSink: NewInMemEventSink(log),
+		log:       log,
 	}
 	s.registerRoutes()
 	return s, nil
@@ -200,8 +212,12 @@ func (k *InMemoryKAPI) GetServeMux() *http.ServeMux {
 	return k.mux
 }
 
+func (k *InMemoryKAPI) GetClients() (kubernetes.Interface, dynamic.Interface) {
+	return k.client, k.dynClient
+}
+
 // Start begins the HTTP server
-func (k *InMemoryKAPI) Start() error {
+func (k *InMemoryKAPI) Start(wg *sync.WaitGroup) error {
 	// We do this because we want the bind address
 	listener, err := net.Listen("tcp", k.server.Addr)
 	if err != nil {
@@ -229,6 +245,16 @@ func (k *InMemoryKAPI) Start() error {
 	}
 	k.log.Info("sample kube-scheduler-config generated", "path", schedulerTmplParams.KubeSchedulerConfigPath)
 	k.log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr)
+
+	k.client, k.dynClient, err = buildClients(k.cfg.KubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
+	}
+
+	if wg != nil {
+		wg.Done()
+	}
+
 	if err := k.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("%w: %w", api.ErrServiceFailed, err)
 	}
@@ -642,6 +668,7 @@ func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.S
 		w.Header().Set("Transfer-Encoding", "chunked")
 		flusher := getFlusher(w)
 		if flusher == nil {
+			k.log.Error(nil, "cannot get flusher for response writer", "gvk", d.GVK, "namespace", namespace, "startVersion", startVersion, "labelSelector", labelSelector)
 			return
 		}
 
@@ -929,4 +956,22 @@ func parseLabelSelector(req *http.Request) (labels.Selector, error) {
 		return labels.Everything(), nil
 	}
 	return labels.Parse(raw)
+}
+
+// buildClients currently constructs a remote client. TODO: change this later to an embedded client.
+func buildClients(kubeConfigPath string) (client kubernetes.Interface, dynClient dynamic.Interface, err error) {
+	clientConfig, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	if err != nil {
+		return
+	}
+	clientConfig.ContentType = "application/json"
+	client, err = kubernetes.NewForConfig(clientConfig)
+	if err != nil {
+		return
+	}
+	dynClient, err = dynamic.NewForConfig(clientConfig)
+	if err != nil {
+		return
+	}
+	return
 }

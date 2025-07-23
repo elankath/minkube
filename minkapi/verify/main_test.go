@@ -248,7 +248,7 @@ func TestObjCreationViaScheme(t *testing.T) {
 func listObjects(t *testing.T, watcher watch.Interface) {
 	t.Helper()
 	watchCh := watcher.ResultChan()
-	t.Logf("Waiting on watchCh: %v", watchCh)
+	t.Logf("Iterating watchCh: %v", watchCh)
 	for ev := range watchCh {
 		t.Logf("%v: %v", ev.Type, ev.Object)
 	}
@@ -256,7 +256,7 @@ func listObjects(t *testing.T, watcher watch.Interface) {
 
 func createKubeClient(t *testing.T) kubernetes.Interface {
 	t.Helper() // Marks this function as a helper
-	kubeconfigPath := getKubeConfigPath()
+	kubeconfigPath := getKubeConfigPath(t)
 	clientConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		t.Fatal(err)
@@ -269,8 +269,10 @@ func createKubeClient(t *testing.T) kubernetes.Interface {
 	return clientset
 }
 
-func getKubeConfigPath() string {
+func getKubeConfigPath(t *testing.T) string {
+	t.Helper()
 	kubeConfigPath := os.Getenv("KUBECONFIG")
+	t.Logf("KUBECONFIG: %s", kubeConfigPath)
 	if kubeConfigPath == "" {
 		kubeConfigPath = "/tmp/minkapi.yaml"
 	}
@@ -371,7 +373,7 @@ func TestInMemObjMethods(t *testing.T) {
 	}
 
 	go func() {
-		if err := svc.Start(); err != nil {
+		if err := svc.Start(nil); err != nil {
 			log.Error(err, fmt.Sprintf("minkapi start failed"), err)
 			return
 		}
